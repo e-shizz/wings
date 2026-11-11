@@ -2,6 +2,8 @@
 
 **Link every Hermes you own, and your phone, into one wing net.**
 
+**Demo video (85 seconds):** https://x.com/E_Shiz/status/2120602196282941808
+
 Wings is a plugin for Hermes Agent. It makes a private network between your own devices. After that, every machine that is switched on shows up, with its bots and sessions, in Hermes Desktop, in the terminal and in the Hermes app.
 
 It uses WireGuard, a widely used VPN (a way to join devices into one private network over the internet). There is no account to make and no third-party service.
