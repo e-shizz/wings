@@ -1,0 +1,13 @@
+{
+  "name": "wings",
+  "label": "Wings",
+  "description": "QR-paired WireGuard: your phone, laptop and VPS on one private network with your Hermes",
+  "icon": "Network",
+  "version": "0.2.0",
+  "tab": {
+    "path": "/wings",
+    "position": "after:sessions"
+  },
+  "entry": "dist/index.js",
+  "api": "plugin_api.py"
+}

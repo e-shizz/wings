@@ -1,0 +1,45 @@
+plugins {
+    id "com.android.application"
+}
+
+// WingsTunnel.java lives two folders up so there is only one copy of it.
+// Copy it into the build before compiling.
+def wingsSrc = layout.buildDirectory.dir("wings-src").get().asFile
+def copyWingsTunnel = tasks.register("copyWingsTunnel", Copy) {
+    from(file("../../WingsTunnel.java"))
+    into(new File(wingsSrc, "net/wings/tunnel"))
+}
+
+android {
+    namespace "net.wings.sample"
+    compileSdk 36
+
+    defaultConfig {
+        applicationId "net.wings.sample"
+        minSdk 26
+        targetSdk 36
+        versionCode 1
+        versionName "0.1.0"
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+        coreLibraryDesugaringEnabled true
+    }
+
+    sourceSets {
+        main {
+            java.srcDir(wingsSrc)
+        }
+    }
+}
+
+tasks.named("preBuild") { dependsOn(copyWingsTunnel) }
+
+dependencies {
+    implementation "com.wireguard.android:tunnel:1.0.20260102"
+    implementation "com.journeyapps:zxing-android-embedded:4.3.0"
+    implementation "androidx.appcompat:appcompat:1.8.0"
+    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.5"
+}

@@ -1,0 +1,12 @@
+name: wings
+version: "0.3.0"
+description: "Wings: a private WireGuard network between every Hermes you own and your phone. Two devices are enough. Bots and sessions from all your machines in Desktop, the terminal and your phone. No account, no coordination server, no third party."
+author: "Wings contributors"
+license: MIT
+requires_hermes: ">=0.23.0"
+tags: [network, wireguard, remote-access, mobile, dashboard]
+platforms: [linux]
+python_dependencies:
+  - "qrcode>=7.4,<9"
+provides_tools: [wings_status, wings_revoke_device]
+provides_hooks: []

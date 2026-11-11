@@ -1,0 +1,33 @@
+Desktop on Linux: trust the system's certificate authorities in the main process too
+
+"Test" on a saved connection (and every other main-process request) uses Node's built-in
+certificate list on Linux, so a gateway behind a private or company certificate authority that
+the system trusts is reported as "Connection test failed ... the live WebSocket (/api/ws)
+connection failed", while the renderer (Chromium, which reads the system list) connects fine.
+
+The comment in system-ca.ts says Linux is left out because the default trust already covers the
+system store. It does not: Electron's Node starts from its bundled list. On Fedora 45,
+tls.getCACertificates('system') returns the system store (363 certificates here, including a
+private one installed with update-ca-trust), and merging it makes the test pass.
+
+Tested on Hermes Desktop v0.23.0 (Electron 44.9.3, Node 24.22.0), Fedora 45: before, "Connection
+test failed"; after, "Reachable", against a gateway whose certificate chains to a private
+authority in the system store.
+
+--- a/apps/desktop/electron/system-ca.ts
++++ b/apps/desktop/electron/system-ca.ts
+@@ -14,9 +14,11 @@
+ 
+ // Platforms whose OS trust store tls.getCACertificates('system') can enumerate: the Windows
+ // cert store and the macOS keychain (Node reads user + System keychains there, honoring the
+-// "Always Trust" SSL policy — Node ≥ 22.15). Linux is deliberately absent: its 'system' store
+-// is the OpenSSL directory scan, which the default trust already covers.
+-const SYSTEM_CA_PLATFORMS = new Set(['win32', 'darwin'])
++// "Always Trust" SSL policy — Node ≥ 22.15), and on Linux the distribution's store (the
++// OpenSSL directory and bundle). Electron's Node starts from its own bundled list, so without
++// this a certificate authority the admin added with update-ca-trust / update-ca-certificates
++// is trusted by the renderer but not by main-process requests such as the connection test.
++const SYSTEM_CA_PLATFORMS = new Set(['win32', 'darwin', 'linux'])
+ 
+ function installSystemCaTrust(tlsApi: NodeTlsCaApi, platform = process.platform): SystemCaResult {
+   if (!SYSTEM_CA_PLATFORMS.has(platform)) {

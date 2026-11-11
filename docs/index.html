@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wings: give your Hermes wings</title>
+<meta name="description" content="A private network between your Hermes machines and your phone. No account, no third party.">
+<style>
+@font-face { font-family: "Bodoni Moda"; src: url(bodoni-moda-900.woff2) format("woff2"); font-weight: 900; font-display: swap; }
+:root { --bg: #0d1117; --deep: #161b22; --ink: #e6edf3; --dim: #7d8590; --accent: #4a84fe; --line: #30363d; }
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--ink); }
+body { font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+main { position: relative; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; padding: 46vh 1.5rem 4vh; text-align: center; pointer-events: none; }
+main > * { pointer-events: auto; }
+h1 { font: 900 clamp(2.2rem, 5.6vw, 4.6rem)/1.05 "Bodoni Moda", Georgia, serif; letter-spacing: .01em; margin: 0 0 .9rem; text-wrap: balance; }
+p.lead { margin: 0 0 1.1rem; max-width: 34rem; color: var(--dim); text-wrap: pretty; }
+button#wing { all: unset; cursor: pointer; font-size: 2.4rem; line-height: 1; padding: .5rem .9rem; border: 1px solid var(--line); border-radius: 12px; background: var(--deep); transition: transform .2s, border-color .2s; }
+button#wing:hover, button#wing:focus-visible { transform: translateY(-3px); border-color: var(--accent); }
+#hint { margin: .5rem 0 0; font-size: .75rem; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); min-height: 1.2em; }
+pre { max-width: 40rem; margin: .6rem 0 0; padding: .9rem 1rem; text-align: left; white-space: pre-wrap; background: var(--deep); border: 1px solid var(--line); border-radius: 8px; font: .8rem/1.5 ui-monospace, "JetBrains Mono", monospace; }
+nav { margin-top: .9rem; font-size: .8rem; letter-spacing: .14em; text-transform: uppercase; }
+nav a { color: var(--dim); margin: 0 .7rem; text-decoration: none; }
+nav a:hover { color: var(--ink); }
+body.film main { display: none; }
+</style>
+</head>
+<body>
+<canvas id="c" aria-hidden="true"></canvas>
+<main>
+  <h1>Give your Hermes wings</h1>
+  <p class="lead">A private network between your Hermes machines and your phone. No account, no third party. Click the wing, and paste the prompt to your agent.</p>
+  <button id="wing" aria-label="Copy the setup prompt for your agent">🪽</button>
+  <p id="hint" role="status">Click to copy</p>
+  <pre id="prompt"></pre>
+  <nav><a id="repo" href="#">GitHub</a><a id="how" href="?film">How it works</a></nav>
+</main>
+<script src="wings.js"></script>
+</body>
+</html>
