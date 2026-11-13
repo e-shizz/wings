@@ -24,7 +24,7 @@ Tested with the hub cut off for four minutes: two computers that had a direct li
 **On the computer that will be the hub:**
 
 ```bash
-hermes plugins install e-shizz/wings#plugin --enable
+hermes plugins install wings --enable
 hermes wings setup
 hermes wings endpoint <public-ip>:51877     # if it found a private address and devices should reach it from outside
 hermes gateway restart
@@ -81,7 +81,8 @@ Hermes won't open to another device without a sign-in, and Wings keeps that rule
 
 **Your computers.** When a computer joins, the hub gives it a random wing net key, inside the tunnel. To open another machine's Hermes, your computer signs a short note with that key saying which machine it wants, when, and a one-time number. The other machine checks the signature, that the note names it, that it's under a minute old and that it hasn't seen it before. Then it starts a normal Hermes session.
 
-- Wings signs your devices in with keys. It creates a Hermes password only if you ask for one (`hermes wings login --reset`), and keeps it in a file only you can read.
+- Wings signs your devices in with keys. It never creates or changes a Hermes password: that's Hermes's own setting.
+- Only a device can use the Wings sign-in: a connection from a wing net address that this machine doesn't have. A program on the same machine always connects from one of the machine's own addresses, so it gets Hermes's normal sign-in, never the Wings one.
 - **Every device you've added can open Hermes on every machine in your wing net.** That's the point, and it's also the risk: whoever has one of your devices unlocked, or a phone's QR code, can reach your Hermes. If you lose a device, press **Remove** in the Wings tab or run `hermes wings revoke <name>`. Its key stops working right away.
 - If a Hermes already had a password login, it keeps working. Wings leaves it alone.
 - `hermes wings trust off` makes a machine refuse wing net sign-in and end those sessions.
@@ -123,7 +124,7 @@ Some networks block WireGuard. A computer falls back by itself to carrying it ov
 | `hermes wings status` | Who's connected |
 | `hermes wings doctor` | Check everything, including that what should be blocked is |
 | `hermes wings address <name>.wings` | Give this Hermes an HTTPS address |
-| `hermes wings login` | Whether this Hermes also has a password login. `--reset` adds one, if you ever want it |
+| `hermes wings login` | Whether this Hermes also has a password login (Wings never sets one) |
 | `hermes wings safety` | Show or change safety options |
 | `hermes wings relay on\|off` | The HTTPS fallback |
 | `hermes wings trust on\|off` | Whether your devices sign in here through Wings |
@@ -180,9 +181,8 @@ Please read this before installing.
 - the CA key
 - the relay secret
 - the wing net key, and a key that signs this machine's Wings sessions
-- `hermes-login.txt`, only if you ran `hermes wings login --reset`
 
-**Agents.** An agent can see status and remove devices. It can't add a device: pairing is for a person. QR codes and invites hold keys, so they're never returned to the agent or printed into logs. Admin prompts fail cleanly when nobody's there.
+**Agents.** An agent can see status, nothing more. Adding or removing a device is for a person (the Wings tab, `/wings`, or `hermes wings`). QR codes and invites hold keys, so they're never returned to the agent or printed into logs. Admin prompts fail cleanly when nobody's there.
 
 ## Limits
 

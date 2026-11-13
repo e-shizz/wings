@@ -218,48 +218,7 @@ check("and it never reaches Hermes", len(seen) == n)
 proxy.terminate()
 proxy.wait()
 
-# The same programs again, this time counting localhost as the tunnel, to reach the code that says yes.
-tport, pport = free_port(), free_port()
-proxy = subprocess.Popen([str(tmp / "proxy"), "127.0.0.1", "vps.wings", str(hermes.server_address[1]), str(tport), str(pport), "127.0.0."],
-                         env={**os.environ, "CREDENTIALS_DIRECTORY": str(creds)})
-wait_port(pport)
-r = web(APP, path=f"/wings-approve?state={STATE}")
-loc = [l for l in r.split(b"\r\n") if l.startswith(b"Location:")]
-check("a device on the tunnel is signed in", r.startswith(b"HTTP/1.1 302") and bool(loc))
-code = loc[0].split(b"code=")[1].split(b"&")[0].decode() if loc else ""
-check("the note names that device", code.split(".")[1:5] == ["127", "0", "0", "1"])
-check("it returns to the address the device came from", bool(loc) and loc[0].startswith(f"Location: http://vps.wings:{pport}/auth/callback?".encode()))
-r = web(APP, path="/wings-approve?state=short")
-check("must fail: a malformed sign-in", r.startswith(b"HTTP/1.1 404"))
-r = web(APP, path="/wings-approve?state=" + "a" * 24 + "%0d%0aSet-Cookie:x")
-check("must fail: header injection", r.startswith(b"HTTP/1.1 404") and b"Set-Cookie" not in r)
-
-keep = b"GET /a HTTP/1.1\r\nHost: vps.wings\r\nUser-Agent: okhttp\r\n\r\n"
-post = b"POST /b HTTP/1.1\r\nHost: vps.wings\r\nContent-Length: 5\r\n\r\nhello"
-n = len(seen)
-a1, a2, a3 = on_one_connection(pport, keep, post, ask)
-check("two requests on one open connection both reach Hermes", a1.endswith(b"hermes") and a2.endswith(b"hermes") and len(seen) == n + 2)
-check("the body arrives whole", seen[-1].endswith(b"\r\n\r\nhello"))
-check("sign-in works on a connection the browser kept open", a3.startswith(b"HTTP/1.1 302"))
-smuggle = b"POST /c HTTP/1.1\r\nHost: vps.wings\r\nContent-Length: 4\r\n\r\nGET "
-n = len(seen)
-on_one_connection(pport, smuggle)
-check("a body is never mistaken for a request", len(seen) == n + 1 and seen[-1].endswith(b"\r\n\r\nGET "))
-
-n = len(seen)
-r = web(DESK, path="/login")
-check("Desktop's sign-in window skips the chooser", r.startswith(b"HTTP/1.1 302") and b"Location: /auth/login?provider=wings-device\r\n" in r and len(seen) == n)
-web(DESK, path="/login?next=%2Fchat")
-check("a sign-in page with something to say is left alone", seen[-1].startswith(b"GET /login?next=%2Fchat"))
-web(DESK, "Referer: https://vps.wings/chat", path="/login")
-check("signing out stays signed out", seen[-1].startswith(b"GET /login HTTP/1.1"))
-
-native = "/auth/native/authorize?code_challenge=x&redirect_uri=y"
-web(APP, path=native)
-check("the app skips the chooser", b"provider=wings-device&code_challenge=x" in seen[-1])
-web(APP, path="/auth/native/authorize?provider=basic&x=1")
-check("a choice already made is left alone", b"?provider=basic&x=1" in seen[-1] and b"wings-device" not in seen[-1])
-proxy.terminate()
+# The sign-in that says yes, and the must-fail cases from this machine itself: tests/test_device_signin.py
 
 print(f"{fails} failed")
 sys.exit(1 if fails else 0)

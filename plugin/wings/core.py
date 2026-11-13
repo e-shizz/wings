@@ -52,6 +52,15 @@ _lock = threading.Lock()
 
 # ---------------------------------------------------------------- storage
 
+def hermes_home() -> Path:
+    """This profile's Hermes home, as Hermes itself works it out (named profiles get their own)."""
+    try:
+        from hermes_constants import get_hermes_home  # type: ignore
+        return Path(get_hermes_home())
+    except Exception:  # outside Hermes (the tests): the same default Hermes uses
+        return Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes")
+
+
 def home() -> Path:
     """Profile-scoped data dir: <HERMES_HOME>/plugin-data/wings (survives plugin updates)."""
     override = os.environ.get("WINGS_HOME")
@@ -62,8 +71,7 @@ def home() -> Path:
             from plugins.plugin_storage import plugin_data_dir  # type: ignore
             p = Path(plugin_data_dir("wings"))
         except Exception:
-            base = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
-            p = base / "plugin-data" / "wings"
+            p = hermes_home() / "plugin-data" / "wings"
     p.mkdir(parents=True, exist_ok=True)
     os.chmod(p, 0o700)
     return p

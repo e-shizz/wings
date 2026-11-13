@@ -89,6 +89,8 @@ bash tests/test_root_validate.sh   # the root helper's gates: every hostile inpu
 python3 tests/test_core.py         # living with existing setups, invites, safety options
 python3 tests/test_trust.py        # signing in by the wing net key: what must work and what must fail
 python3 tests/test_phone_path.py   # .wings names for phones, and Hermes over HTTP inside the tunnel
+python3 tests/test_device_signin.py # the no-password sign-in: a device on the tunnel yes, a program on the same machine never
+python3 tests/test_local_bots.py    # the Wings tab lists this machine's bots, also when Desktop's one-use ticket rules out asking Hermes (uses Hermes's own Python)
 python3 tests/test_net_trust.py    # one certificate authority for the wing net: what the hub signs and refuses
 python3 tests/test_mesh.py         # direct links between computers, and hostile input the root side refuses
 python3 tests/test_start_job.py    # the Turn on Wings button

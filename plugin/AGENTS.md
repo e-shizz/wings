@@ -27,7 +27,7 @@ Run `hermes wings status` on each machine. If Wings is already set up, go to ste
 ## 2. On the hub
 
 ```bash
-hermes plugins install e-shizz/wings#plugin --enable
+hermes plugins install wings --enable
 hermes wings setup
 ```
 

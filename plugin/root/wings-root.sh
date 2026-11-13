@@ -220,7 +220,7 @@ write_tls_proxy() {
 #!/usr/bin/python3 -I
 """Wings: HTTPS on the tunnel address, forwarded to a local port, port 80 for the Hermes app, and
 the no-password sign-in for devices on the wing net."""
-import asyncio, hashlib, hmac, os, re, ssl, sys, time
+import asyncio, hashlib, hmac, os, re, socket, ssl, sys, time
 
 addr, name, target = sys.argv[1], sys.argv[2], int(sys.argv[3])
 tls_port = int(sys.argv[4]) if len(sys.argv) > 4 else 443
@@ -262,11 +262,30 @@ def reply(status, extra=""):
     return f"HTTP/1.1 {status}\r\n{extra}Cache-Control: no-store\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".encode()
 
 
+def is_own_address(ip):
+    """Does this machine have this address? Then the connection came from a program here, not a device.
+    Ask the routing table which source it would use to reach that address: only for an address of its own
+    does it pick the address itself (this holds even where ip_nonlocal_bind lets any address be bound)."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect((ip, 9))  # a UDP connect sends nothing
+            return s.getsockname()[0] == ip
+    except OSError:
+        return True  # can't tell: treat as local, so the answer is no
+
+
+def device(peer):
+    """Is this connection a device on the wing net? Only from a wing net address this machine doesn't have:
+    WireGuard lets a device send only from its own address, and a program here can't finish a connection
+    from an address it doesn't have, because the replies go out through the tunnel to the real owner."""
+    return peer.startswith(peers) and not is_own_address(peer)
+
+
 def approval(head, peer, secure):
-    """Sign-in for a device on the wing net. This address is on the tunnel only, so WireGuard has already
-    proved who is connecting. Hermes gets a short signed note naming that device, and starts a normal session."""
+    """Sign-in for a device on the wing net. WireGuard has already proved who is connecting.
+    Hermes gets a short signed note naming that device, and starts a normal session."""
     m = re.match(rb"GET /wings-approve\?state=([A-Za-z0-9_-]{16,128}) HTTP/1\.[01]\r\n", head)
-    if not m or not peer.startswith(peers):
+    if not m or not device(peer):
         return reply("404 Not Found")
     state, ts = m[1].decode(), str(int(time.time()))
     mac = hmac.new(approve_key, f"wings-device|{state}|{peer}|{ts}".encode(), hashlib.sha256).hexdigest()
@@ -277,7 +296,7 @@ def skips_chooser(head, peer):
     """A bare /login from a device on the wing net, opened directly (not after signing out, not with a
     message to show): go straight to the Wings sign-in."""
     first, _, rest = head.partition(b"\r\n")
-    return (peer.startswith(peers) and re.fullmatch(rb"GET /login HTTP/1\.[01]", first) is not None
+    return (device(peer) and re.fullmatch(rb"GET /login HTTP/1\.[01]", first) is not None
             and b"\r\nreferer:" not in b"\r\n" + rest.lower())
 
 
@@ -325,7 +344,7 @@ async def serve(reader, writer, secure):
                 writer.write(reply("301 Moved Permanently", f"Location: {origin(True)}{path}\r\n"))
                 await writer.drain()
                 return
-            if not secure and head.startswith(b"GET /auth/native/authorize?") and b"provider=" not in head.split(b"\r\n", 1)[0]:
+            if not secure and head.startswith(b"GET /auth/native/authorize?") and device(peer) and b"provider=" not in head.split(b"\r\n", 1)[0]:
                 # The Hermes app, on a phone: no need to choose a sign-in method, the tunnel already knows it.
                 head = head.replace(b"/auth/native/authorize?", b"/auth/native/authorize?provider=wings-device&", 1)
             if up_w is None:

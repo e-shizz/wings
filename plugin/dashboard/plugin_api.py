@@ -183,7 +183,7 @@ def invite(body: dict = Body(...)):
     threading.Thread(target=core.wait_for_join, args=(dev,), daemon=True, name=f"wings-invite-{dev['name']}").start()
     minutes = core.get_settings()["invite_minutes"]
     return JSONResponse({"name": dev["name"], "minutes": minutes,
-                         "command": f"hermes plugins install e-shizz/wings#plugin --enable && hermes wings join {code}"},
+                         "command": f"hermes plugins install wings --enable && hermes wings join {code}"},
                         headers={"Cache-Control": "no-store"})
 
 
@@ -201,7 +201,7 @@ _STAGES = (
 
 def _hermes() -> str:
     """Desktop often starts without the user's PATH, so also look where Hermes installs itself."""
-    home = Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes")
+    home = _core().hermes_home()
     for p in (shutil.which("hermes"), Path.home() / ".local/bin/hermes", home / "hermes-agent/.hermes/bin/hermes",
               Path.home() / ".hermes/hermes-agent/.hermes/bin/hermes"):
         if p and os.access(p, os.X_OK):
@@ -312,43 +312,48 @@ def _session_row(r: dict) -> dict:
             "last": r.get("last_active") or r.get("started_at") or 0}
 
 
-def _local_sessions(profile_home: Path) -> tuple[int, list[dict]]:
-    """How many sessions a bot on this machine has and its latest few, read from its own store."""
-    from contextlib import closing
-    db_path = profile_home / "state.db"
-    if not db_path.is_file():
-        return 0, []
-    try:
-        from hermes_state import SessionDB
-        try:
-            from hermes_state_sessions import INTERNAL_LISTING_SOURCES
-            # One-question chats count: another machine's list (read over its API) shows them too.
-            skip = [x for x in INTERNAL_LISTING_SOURCES if x != "oneshot"]
-        except ImportError:
-            skip = []
-        with closing(SessionDB(db_path=db_path, read_only=True)) as db:
-            rows = db.list_sessions_rich(exclude_sources=skip, limit=15, order_by_last_active=True)
-            rows = [r for r in rows if r.get("message_count", 1) and not r.get("archived")]
-            try:
-                total = db.session_count(exclude_sources=skip, min_message_count=1)
-            except Exception:  # noqa: BLE001
-                total = len(rows)
-        return total, [_session_row(r) for r in rows[:5]]
-    except Exception:  # noqa: BLE001 - an older Hermes: the bot still shows, without its sessions
-        return 0, []
+# Sessions Hermes makes for itself rather than for a person: board tasks and tool runs.
+SKIP_SOURCES = "kanban,tool"
 
 
-def _local_bots() -> list[dict]:
+def _own_get(request: Request):
+    """Read this machine's own Hermes dashboard routes as the person who is signed in: the same routes
+    another machine reads over the wing net, so local and remote bots come from one public surface."""
+    host, port = (request.scope.get("server") or ("127.0.0.1", 9119))[:2]
+    if host in ("", "0.0.0.0", "::"):
+        host = "127.0.0.1"
+    base = f"http://[{host}]:{port}" if ":" in host else f"http://{host}:{port}"
+    headers = {k: request.headers[k] for k in ("host", "cookie", "authorization", "origin", "x-hermes-session-token")
+               if k in request.headers}
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+    def get(path: str):
+        with opener.open(urllib.request.Request(base + path, headers=headers), timeout=4) as r:
+            return json.load(r)
+    return get
+
+
+def _bots(get) -> list[dict] | None:
+    """Who lives on a machine and what they've been doing, from its Hermes's /api/profiles and /api/sessions.
+    None if it doesn't answer."""
     try:
-        from hermes_cli.profiles import list_profiles
+        data = get("/api/profiles")
         out = []
-        for p in list_profiles(lazy_skill_count=True):
-            total, recent = _local_sessions(Path(p.path))
-            out.append({"name": p.name, "up": bool(p.gateway_running), "model": p.model or "", "sessions": total,
-                        "last": max((r["last"] for r in recent), default=0), "recent": recent})
+        for p in data.get("profiles", []) if isinstance(data, dict) else data:
+            name = p.get("name")
+            if not name:
+                continue
+            try:
+                page = get(f"/api/sessions?limit=5&order=recent&min_messages=1&exclude_sources={SKIP_SOURCES}&profile="
+                           + urllib.parse.quote(name))
+            except Exception:  # noqa: BLE001 - a bot whose gateway never ran has no session store yet
+                page = {}
+            recent = [_session_row(r) for r in page.get("sessions", [])]
+            out.append({"name": name, "up": bool(p.get("gateway_running")), "model": p.get("model") or "",
+                        "sessions": page.get("total", len(recent)), "last": max((r["last"] for r in recent), default=0), "recent": recent})
         return out
-    except Exception:  # noqa: BLE001 - an older Hermes just shows no agents here
-        return []
+    except Exception:  # noqa: BLE001 - asleep or unreachable is normal on a network like this
+        return None
 
 
 def _remote_get(base: str, path: str):
@@ -369,36 +374,98 @@ def _remote_get(base: str, path: str):
         return fetch()
 
 
-def _remote_bots(base: str) -> list[dict] | None:
-    """Ask a machine's Hermes who lives there and what they've been doing. None if it doesn't answer."""
-    def get(path: str):
-        return _remote_get(base, path)
-
+def _profile_homes() -> list[tuple[str, Path]]:
+    """This machine's bots, read from disk with Hermes's public helpers. Used when this Hermes's own routes
+    can't be asked as the person: Hermes Desktop signs each request with a one-use ticket."""
+    from hermes_constants import get_default_hermes_root
+    root = Path(get_default_hermes_root())
     try:
-        data = get("/api/profiles")
+        from hermes_constants import named_profile_is_live
+    except ImportError:  # an older Hermes
+        def named_profile_is_live(home):
+            return (Path(home) / "config.yaml").is_file()
+    out = [("default", root)]
+    profiles = root / "profiles"
+    if profiles.is_dir():
+        out += [(d.name, d) for d in sorted(profiles.iterdir()) if d.is_dir() and named_profile_is_live(d)]
+    return out
+
+
+def _gateway_up(home: Path) -> bool:
+    try:
+        from gateway.status import read_runtime_status, runtime_status_is_stale, runtime_status_pid_is_live
+        rec = read_runtime_status(home / "gateway_state.json")
+        return bool(rec) and runtime_status_pid_is_live(rec) and not runtime_status_is_stale(rec)
+    except Exception:  # noqa: BLE001 - unknown is shown as asleep
+        return False
+
+
+def _disk_sessions(home: Path) -> tuple[int, list[dict]]:
+    from contextlib import closing
+    db_path = home / "state.db"
+    if not db_path.is_file():
+        return 0, []
+    try:
+        from hermes_state import SessionDB
+        skip = SKIP_SOURCES.split(",")
+        with closing(SessionDB(db_path=db_path, read_only=True)) as db:
+            rows = db.list_sessions_rich(exclude_sources=skip, limit=15, order_by_last_active=True)
+            rows = [r for r in rows if r.get("message_count", 1) and not r.get("archived")]
+            try:
+                total = db.session_count(exclude_sources=skip, min_message_count=1)
+            except Exception:  # noqa: BLE001
+                total = len(rows)
+        return total, [_session_row(r) for r in rows[:5]]
+    except Exception:  # noqa: BLE001 - the bot still shows, without its sessions
+        return 0, []
+
+
+def _disk_get(path: str):
+    """Answers the two routes _bots and _looks ask, from disk, in the same shape Hermes serves them."""
+    from hermes_yaml import safe_load
+    if path.startswith("/api/profiles"):
         out = []
-        for p in data.get("profiles", []) if isinstance(data, dict) else data:
-            name = p.get("name")
-            if not name:
-                continue
-            page = get("/api/sessions?limit=5&profile=" + urllib.parse.quote(name))
-            recent = [_session_row(r) for r in page.get("sessions", [])]
-            out.append({"name": name, "up": bool(p.get("gateway_running")), "model": p.get("model") or "",
-                        "sessions": page.get("total", len(recent)), "last": max((r["last"] for r in recent), default=0), "recent": recent})
-        return out
-    except Exception:  # noqa: BLE001 - asleep or unreachable is normal on a network like this
-        return None
+        for name, home in _profile_homes():
+            try:
+                cfg = safe_load((home / "config.yaml").read_text()) or {}
+            except Exception:  # noqa: BLE001
+                cfg = {}
+            model = cfg.get("model")
+            model = (model.get("default") or model.get("model")) if isinstance(model, dict) else model
+            out.append({"name": name, "path": str(home), "gateway_running": _gateway_up(home), "model": model or ""})
+        return {"profiles": out}
+    name = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query).get("profile", [""])[0]
+    home = dict(_profile_homes()).get(name)
+    total, recent = _disk_sessions(home) if home else (0, [])
+    return {"sessions": [{"id": r["id"], "title": r["title"], "last_active": r["last"]} for r in recent], "total": total}
 
 
-def _gather() -> dict:
+def _here(own):
+    """This machine's own routes as the person; if they can't be asked that way, the same answers from disk."""
+    def get(path: str):
+        try:
+            return own(path)
+        except Exception:  # noqa: BLE001
+            return _disk_get(path)
+    return get
+
+
+def _remote_bots(base: str) -> list[dict] | None:
+    return _bots(lambda path: _remote_get(base, path))
+
+
+def _gather(here) -> dict:
     core = _core()
     state = core.load()
     hub, member = state.get("hub") or {}, state.get("member") or {}
-    agents: dict = {"self": _local_bots()}
+    # A machine that can't be read is left out, so the copy remembered from last time stays.
+    mine = _bots(here)
+    agents: dict = {"self": mine} if mine is not None else {}
     targets: dict = {}
     own = core.get_address()
     if hub:
-        agents[hub["name"]] = agents["self"]
+        if "self" in agents:
+            agents[hub["name"]] = agents["self"]
         if own:
             targets[hub["name"]] = f"https://{own}"
         for d in core.devices():
@@ -409,9 +476,11 @@ def _gather() -> dict:
         for d in _pkg("upkeep").roster() or []:
             if d["kind"] != "phone" and d["online"] and not d["self"]:
                 targets[d["name"]] = f"https://{core._dns_label(d['name'])}.wings"
-    styled: dict = {"self": looks()}
+    mine_looks = _looks(here)
+    styled: dict = {"self": mine_looks} if mine_looks else {}
     if hub:
-        styled[hub["name"]] = styled["self"]
+        if "self" in styled:
+            styled[hub["name"]] = styled["self"]
     with ThreadPoolExecutor(max_workers=6) as pool:
         for name, found in zip(targets, pool.map(_remote_looks, targets.values())):
             if found:
@@ -447,8 +516,8 @@ def _read_look(home: Path) -> dict:
     """The look a person already gave this bot in Hermes: its Bot Mode title and picture."""
     look: dict = {}
     try:
-        import yaml
-        doc = yaml.safe_load((home / "profile.yaml").read_text()) or {}
+        from hermes_yaml import safe_load
+        doc = safe_load((home / "profile.yaml").read_text()) or {}
         meta = (doc.get("ui_meta") or {}).get("hermes-bots") or {}
     except Exception:  # noqa: BLE001 - no profile.yaml is the usual case
         doc, meta = {}, {}
@@ -465,22 +534,29 @@ def _read_look(home: Path) -> dict:
     return look
 
 
-@router.get("/looks")
-def looks():
-    """This machine's bots as their owner styled them. Read by the owner's other machines over the wing net."""
+def _looks(get) -> dict:
+    """This machine's bots as their owner styled them, from the profile list its own Hermes serves."""
     try:
-        from hermes_cli.profiles import list_profiles
+        data = get("/api/profiles")
         out = {}
-        for p in list_profiles(lazy_skill_count=True):
-            look = _read_look(Path(p.path))
+        for p in data.get("profiles", []) if isinstance(data, dict) else data:
+            if not p.get("name"):
+                continue
+            look = _read_look(Path(p.get("path") or ""))
             # Hermes already knows the name its owner gave this bot; use it when the file could not be read here.
-            for title in (getattr(p, "bot_title", ""), getattr(p, "display_name", "")):
+            for title in (p.get("bot_title"), p.get("display_name")):
                 if "title" not in look and isinstance(title, str) and title.strip():
                     look["title"] = title.strip()
-            out[p.name] = look
+            out[p["name"]] = look
         return out
     except Exception:  # noqa: BLE001 - an older Hermes just keeps the default portraits
         return {}
+
+
+@router.get("/looks")
+def looks(request: Request):
+    """This machine's bots as their owner styled them. Read by the owner's other machines over the wing net."""
+    return _looks(_here(_own_get(request)))
 
 
 def _remote_looks(base: str) -> dict:
@@ -509,7 +585,7 @@ def _remember(agents_now: dict, looks_now: dict) -> tuple[dict, dict]:
     return agents_all, looks_all
 
 
-def _net_now() -> dict:
+def _net_now(here) -> dict:
     """Who lives where, and how they look. Answers at once from what was last known (this run's, or the
     copy on disk from an earlier run) and catches up in the background, so the page never waits on a
     machine that is slow or asleep. Only the very first look on a new install has to wait."""
@@ -527,7 +603,7 @@ def _net_now() -> dict:
 
     def catch_up():
         try:
-            found, styled = _gather()
+            found, styled = _gather(here)
             agents_all, looks_all = _remember(found, styled)
             with _net_lock:
                 _net_cache["agents"], _net_cache["looks"], _net_cache["at"] = agents_all, looks_all, time.time()
@@ -544,18 +620,18 @@ def _net_now() -> dict:
 
 
 @router.get("/agent-looks")
-def agent_looks():
+def agent_looks(request: Request):
     """Pictures and titles, apart from /agents so the page's regular refresh stays small."""
     demo = os.environ.get("WINGS_NET_FILE")
     if demo:
         return json.loads(Path(demo + ".looks").read_text())
-    return _net_now()["looks"]
+    return _net_now(_here(_own_get(request)))["looks"]
 
 
 @router.get("/agents")
-def agents():
+def agents(request: Request):
     """Which Hermes agents live on which machine, and their latest sessions."""
     demo = os.environ.get("WINGS_NET_FILE")
     if demo:
         return json.loads(Path(demo).read_text())
-    return _net_now()["agents"]
+    return _net_now(_here(_own_get(request)))["agents"]

@@ -6,19 +6,16 @@ network. No account, no coordination server, no third party.
 Surfaces registered here:
   CLI       hermes wings (cockpit)|setup|status|doctor|connect|attach|name|add|invite|join|relay|address|login|safety|trust|qr|revoke|endpoint|router|refresh|upkeep|uninstall
   Slash     /wings [status|add <name>|revoke <name>]
-  Tools     wings_status, wings_revoke_device (adding a device is for a person, not the agent)
+  Tools     wings_status (read only; adding or removing a device is for a person, not the agent)
   Dashboard dashboard/ (tab + /api/plugins/wings/ routes) — also shows in the Hermes app
 """
 from __future__ import annotations
 
 import argparse
-import base64
-import hashlib
 import ipaddress
 import json
 import os
 import re
-import secrets
 import socket
 import sys
 import time
@@ -101,22 +98,10 @@ def _tool_status(args: dict, **_kw) -> str:
     return json.dumps(core.status())
 
 
-def _tool_revoke(args: dict, **_kw) -> str:
-    try:
-        return json.dumps({"revoked": core.revoke(args.get("name", ""))})
-    except Exception as e:
-        return json.dumps({"error": str(e)})
-
-
 _STATUS_SCHEMA = {
     "name": "wings_status",
     "description": "Show the Wings private network: hub address, devices, which are online.",
     "parameters": {"type": "object", "properties": {}, "required": []},
-}
-_REVOKE_SCHEMA = {
-    "name": "wings_revoke_device",
-    "description": "Remove a device from the Wings network immediately (its key stops working).",
-    "parameters": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]},
 }
 
 
@@ -380,44 +365,18 @@ def _current_login() -> str:
             or os.environ.get("HERMES_DASHBOARD_BASIC_AUTH_USERNAME", ""))
 
 
-def _make_login(username: str = "wings") -> None:
-    """Create a Hermes dashboard login. Hermes stores only the hash; the password is shown once."""
-    password = secrets.token_urlsafe(18)
-    salt = secrets.token_bytes(16)
-    n, r, p = 16384, 8, 1
-    dk = hashlib.scrypt(password.encode(), salt=salt, n=n, r=r, p=p, dklen=32)
-    hashed = f"scrypt${n}${r}${p}${base64.b64encode(salt).decode()}${base64.b64encode(dk).decode()}"
-    _hermes_config("set", "dashboard.basic_auth.username", username)
-    _hermes_config("set", "dashboard.basic_auth.password_hash", hashed)
-    _hermes_config("set", "dashboard.basic_auth.secret", secrets.token_urlsafe(32))
-    fd = os.open(_login_file(), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
-        f.write(f"Your Hermes login (made by Wings)\nusername: {username}\npassword: {password}\n")
-    print("\nHermes needs a login for this address, so Wings made one. It's the login for your Hermes, on any device.")
-    if sys.stdout.isatty():
-        print(f"  username: {username}\n  password: {password}")
-        print(f"Save it in your password manager. There's also a private copy at {_login_file()}")
-    else:
-        print(f"The password is in the private file {_login_file()}. Open it yourself on this machine; "
-              "it isn't printed here because this output may be stored.")
-
-
 def _cli_login(args) -> int:
+    """Which login this Hermes asks for. Wings never writes a Hermes password: that is Hermes's own setting."""
     user = _current_login()
-    if args.reset:
-        _make_login(user or "wings")
-        print("Finish with: hermes gateway restart")
-        return 0
+    old = _login_file()
     if not user:
-        print("There's no Hermes password here. Your devices sign in through Wings. "
-              "To add a password anyway: hermes wings login --reset")
-        return 0
-    print(f"Your devices sign in through Wings. This Hermes also has a password login, username: {user}")
-    if _login_file().exists():
-        print(f"Wings made this login. The password is in the private file {_login_file()}")
+        print("There's no Hermes password here. Your devices sign in through Wings, by their tunnel keys.")
     else:
-        print("You or another tool set this one up, so Wings doesn't have the password. "
-              "To replace it: hermes wings login --reset")
+        print(f"Your devices sign in through Wings. This Hermes also has a password login, username: {user}")
+    print("A Hermes password is Hermes's own setting, so Wings doesn't make or change one. To set one, follow "
+          "'Authentication' in Hermes's web dashboard guide (dashboard.basic_auth in config.yaml).")
+    if old.exists():
+        print(f"An older Wings saved a password it made at {old}. Save it in your password manager, then delete that file.")
     return 0
 
 
@@ -701,8 +660,7 @@ def _cli_args(p) -> None:
     subs.add_parser("doctor", help="check this machine, including that what should be blocked is")
     tr = subs.add_parser("trust", help="whether your own computers sign in to this one through Wings")
     tr.add_argument("action", nargs="?", choices=["on", "off"])
-    lg = subs.add_parser("login", help="which login the Hermes address asks for, or make a new one")
-    lg.add_argument("--reset", action="store_true")
+    lg = subs.add_parser("login", help="whether this Hermes also has a password login")
     i = subs.add_parser("invite", help="invite another Hermes computer to this wing net; waits for it to join")
     i.add_argument("name")
     i.add_argument("--kind", default="server", choices=["computer", "server", "device"])
@@ -755,8 +713,6 @@ def _cli_trust(args) -> int:
 def register(ctx) -> None:
     ctx.register_tool(name="wings_status", toolset=_TOOLSET, schema=_STATUS_SCHEMA,
                       handler=_tool_status, emoji="🪽", description="Wings network status")
-    ctx.register_tool(name="wings_revoke_device", toolset=_TOOLSET, schema=_REVOKE_SCHEMA,
-                      handler=_tool_revoke, emoji="🪽", description="Revoke a Wings device")
     ctx.register_command("wings", handler=_slash, description="Wings private network",
                          args_hint="[status|add <name>|revoke <name>]")
     ctx.register_cli_command(name="wings", help="Wings: a private network between your Hermes computers and your phone",

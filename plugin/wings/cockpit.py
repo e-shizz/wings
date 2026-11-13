@@ -147,17 +147,16 @@ def fleet() -> tuple[list[Machine], str]:
     return out, problem
 
 
+# Sessions Hermes makes for itself rather than for a person (board tasks, tool runs, one-question chats).
+SKIP_SOURCES = ("kanban", "tool", "oneshot")
+
+
 def local_sessions(limit: int = 5) -> list[dict]:
     """This machine's recent sessions, read straight from Hermes's own store: no web, no sign-in."""
     from contextlib import closing
     from hermes_state import SessionDB
-    try:
-        from hermes_state_sessions import INTERNAL_LISTING_SOURCES
-        skip = list(INTERNAL_LISTING_SOURCES)
-    except ImportError:
-        skip = []
     with closing(SessionDB(read_only=True)) as db:
-        rows = db.list_sessions_rich(exclude_sources=skip, limit=limit * 3, order_by_last_active=True)
+        rows = db.list_sessions_rich(exclude_sources=list(SKIP_SOURCES), limit=limit * 3, order_by_last_active=True)
     return [r for r in rows if r.get("message_count", 1) and not r.get("archived")][:limit]
 
 
